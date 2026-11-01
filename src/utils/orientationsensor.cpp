@@ -17,6 +17,8 @@
 #include <QDBusPendingCall>
 #include <QDBusServiceWatcher>
 
+#include <utility>
+
 namespace KWin
 {
 
@@ -208,11 +210,20 @@ void OrientationSensor::subscribe()
     }
 
     m_subscription = std::make_unique<OrientationSensorSubscription>();
-    connect(m_subscription.get(), &OrientationSensorSubscription::readingChanged, this, [this]() {
-        updateOrientation(m_subscription->reading());
+    // A new subscription has no reading until net.hadess.SensorProxy answers.
+    // Keep the last known orientation until then, rather than reporting it as
+    // undefined, which would rotate the output to its manual transform and
+    // back every time the screen turns on.
+    connect(m_subscription.get(), &OrientationSensorSubscription::readingChanged, this, [this, firstReading = true]() mutable {
+        const AccelerometerOrientation reading = m_subscription->reading();
+        if (std::exchange(firstReading, false) && reading == m_orientation) {
+            // The outputs may have been reconfigured while there was no
+            // subscription, so report the first reading even if it's unchanged.
+            Q_EMIT readingReceived();
+        } else {
+            updateOrientation(reading);
+        }
     });
-
-    updateOrientation(m_subscription->reading());
 }
 
 void OrientationSensor::unsubscribe()
